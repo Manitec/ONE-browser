@@ -21,18 +21,170 @@ function stripScripts(html) {
     .replace(/<img[^>]+(?:gen_204|pixel\.gif|track|beacon)[^>]*>/gi, '');
 }
 
+// ── Plex See Panel ─────────────────────────────────────────────────────────
+function PlexPanel({ currentUrl, pageMeta, onClose }) {
+  const [prompt, setPrompt]       = React.useState('');
+  const [response, setResponse]   = React.useState(null);
+  const [thinking, setThinking]   = React.useState(false);
+  const [err, setErr]             = React.useState(null);
+
+  // Reset when URL changes
+  React.useEffect(() => {
+    setResponse(null);
+    setErr(null);
+    setPrompt('');
+  }, [currentUrl]);
+
+  const askPlex = async () => {
+    if (!currentUrl) return;
+    setThinking(true);
+    setErr(null);
+    setResponse(null);
+    try {
+      const res = await fetch('/api/see', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          imageUrl: pageMeta?.image || null,
+          pageUrl: currentUrl,
+          pageTitle: pageMeta?.title || null,
+          prompt: prompt.trim() || null,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Plex error');
+      setResponse(data.response);
+    } catch (e) {
+      setErr(e.message);
+    } finally {
+      setThinking(false);
+    }
+  };
+
+  return (
+    <aside className="w-72 flex-shrink-0 bg-gray-900 border-l border-gray-800 flex flex-col h-full">
+      {/* Panel header */}
+      <div className="flex items-center justify-between px-3 py-2.5 border-b border-gray-800">
+        <div className="flex items-center gap-2">
+          {/* Plex eye icon */}
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" className="text-emerald-400">
+            <path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7S1 12 1 12z" stroke="currentColor" strokeWidth="1.5"/>
+            <circle cx="12" cy="12" r="3" stroke="currentColor" strokeWidth="1.5"/>
+          </svg>
+          <span className="text-sm font-semibold text-white">Plex sees</span>
+        </div>
+        <button
+          onClick={onClose}
+          className="text-gray-600 hover:text-gray-400 transition-colors p-1"
+          title="Close Plex panel"
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <path d="M18 6 6 18M6 6l12 12"/>
+          </svg>
+        </button>
+      </div>
+
+      {/* Page context */}
+      {pageMeta && (
+        <div className="px-3 py-2.5 border-b border-gray-800/60">
+          {pageMeta.image && (
+            <img
+              src={pageMeta.image}
+              alt="page preview"
+              className="w-full h-24 object-cover rounded mb-2 opacity-80"
+              onError={(e) => { e.target.style.display = 'none'; }}
+            />
+          )}
+          {pageMeta.title && (
+            <p className="text-xs text-gray-300 font-medium truncate">{pageMeta.title}</p>
+          )}
+          {pageMeta.description && (
+            <p className="text-xs text-gray-600 mt-0.5 line-clamp-2">{pageMeta.description}</p>
+          )}
+        </div>
+      )}
+
+      {/* Prompt + ask */}
+      <div className="px-3 py-3 border-b border-gray-800/60">
+        <textarea
+          value={prompt}
+          onChange={(e) => setPrompt(e.target.value)}
+          placeholder="Ask Plex something about this page… (optional)"
+          rows={2}
+          className="w-full bg-gray-800 border border-gray-700 rounded text-xs text-gray-200 placeholder-gray-600 px-2.5 py-2 resize-none focus:outline-none focus:border-emerald-500/60 transition-colors"
+        />
+        <button
+          onClick={askPlex}
+          disabled={thinking || !currentUrl}
+          className="mt-2 w-full flex items-center justify-center gap-2 px-3 py-1.5 bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/30 hover:border-emerald-500/60 text-emerald-400 text-xs font-medium rounded transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+        >
+          {thinking ? (
+            <>
+              <svg className="animate-spin" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M21 12a9 9 0 1 1-6.219-8.56"/>
+              </svg>
+              Plex is seeing…
+            </>
+          ) : (
+            <>
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7S1 12 1 12z"/>
+                <circle cx="12" cy="12" r="3"/>
+              </svg>
+              Ask Plex
+            </>
+          )}
+        </button>
+      </div>
+
+      {/* Response area */}
+      <div className="flex-1 overflow-y-auto px-3 py-3">
+        {err && (
+          <p className="text-xs text-red-400 bg-red-950/40 border border-red-800/40 rounded p-2">{err}</p>
+        )}
+        {!response && !thinking && !err && (
+          <p className="text-xs text-gray-700 text-center mt-4">
+            {currentUrl ? 'Press Ask Plex to let her see this page.' : 'Navigate somewhere first.'}
+          </p>
+        )}
+        {response && (
+          <div className="text-xs text-gray-300 leading-relaxed whitespace-pre-wrap">
+            {response}
+          </div>
+        )}
+      </div>
+    </aside>
+  );
+}
+
+// ── Main Component ──────────────────────────────────────────────────────────
 export default function MainComponent() {
-  const [inputValue, setInputValue]   = React.useState('');
-  const [currentUrl, setCurrentUrl]   = React.useState('');
-  const [iframeSrc, setIframeSrc]     = React.useState('');
-  const [loading, setLoading]         = React.useState(false);
-  const [error, setError]             = React.useState(null);
-  const [history, setHistory]         = React.useState([]);
+  const [inputValue, setInputValue]     = React.useState('');
+  const [currentUrl, setCurrentUrl]     = React.useState('');
+  const [iframeSrc, setIframeSrc]       = React.useState('');
+  const [loading, setLoading]           = React.useState(false);
+  const [error, setError]               = React.useState(null);
+  const [history, setHistory]           = React.useState([]);
   const [historyIndex, setHistoryIndex] = React.useState(-1);
   const [searchEngine, setSearchEngine] = React.useState('google');
+  const [plexOpen, setPlexOpen]         = React.useState(false);
+  const [pageMeta, setPageMeta]         = React.useState(null);
   const abortRef    = React.useRef(null);
   const iframeRef   = React.useRef(null);
   const prevBlobRef = React.useRef(null);
+
+  // Fetch og meta whenever URL settles
+  React.useEffect(() => {
+    if (!currentUrl) { setPageMeta(null); return; }
+    fetch('/api/meta', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url: currentUrl }),
+    })
+      .then((r) => r.json())
+      .then((d) => setPageMeta(d))
+      .catch(() => setPageMeta(null));
+  }, [currentUrl]);
 
   const navigate = React.useCallback(async (targetUrl) => {
     if (!targetUrl) return;
@@ -96,19 +248,11 @@ export default function MainComponent() {
     else navigate(val);
   };
 
-  const goBack = () => {
-    if (historyIndex > 0) navigate(history[historyIndex - 1]);
-  };
-
-  const goForward = () => {
-    if (historyIndex < history.length - 1) navigate(history[historyIndex + 1]);
-  };
-
+  const goBack    = () => { if (historyIndex > 0) navigate(history[historyIndex - 1]); };
+  const goForward = () => { if (historyIndex < history.length - 1) navigate(history[historyIndex + 1]); };
   const handleReset = () => {
-    setCurrentUrl('');
-    setIframeSrc('');
-    setError(null);
-    setInputValue('');
+    setCurrentUrl(''); setIframeSrc(''); setError(''); setInputValue('');
+    setPageMeta(null); setPlexOpen(false);
   };
 
   React.useEffect(() => {
@@ -123,13 +267,13 @@ export default function MainComponent() {
 
   return (
     <div className="min-h-screen bg-gray-950 text-gray-100 flex flex-col">
+
       {/* Toolbar */}
       <header className="bg-gray-900 border-b border-gray-800 sticky top-0 z-10 shadow-lg">
         <div className="w-full px-2 sm:px-4 py-2 sm:py-3">
 
-          {/* Row 1: logo + nav + engine + open */}
+          {/* Row 1 */}
           <div className="flex items-center gap-1 sm:gap-2 mb-2">
-            {/* Logo */}
             <div className="flex items-center gap-1.5 mr-2 flex-shrink-0">
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" className="text-emerald-400">
                 <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="1.5"/>
@@ -138,10 +282,10 @@ export default function MainComponent() {
               <span className="font-bold text-sm tracking-tight text-white">ONE</span>
             </div>
 
-            <NavBtn onClick={goBack}    disabled={!canBack}               title="Back">
+            <NavBtn onClick={goBack}    disabled={!canBack}  title="Back">
               <i className="fas fa-arrow-left text-xs" />
             </NavBtn>
-            <NavBtn onClick={goForward} disabled={!canFwd}                title="Forward">
+            <NavBtn onClick={goForward} disabled={!canFwd}   title="Forward">
               <i className="fas fa-arrow-right text-xs" />
             </NavBtn>
             <NavBtn onClick={() => currentUrl && navigate(currentUrl)} disabled={!currentUrl || loading} title="Reload">
@@ -166,6 +310,23 @@ export default function MainComponent() {
               <option value="perplexity">Perplexity</option>
               <option value="brave">Brave</option>
             </select>
+
+            {/* Plex eye toggle */}
+            <button
+              onClick={() => setPlexOpen((o) => !o)}
+              title={plexOpen ? 'Close Plex panel' : 'Ask Plex about this page'}
+              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium transition-all border ${
+                plexOpen
+                  ? 'bg-emerald-500/15 border-emerald-500/50 text-emerald-400'
+                  : 'bg-gray-800 border-gray-700 text-gray-400 hover:text-white hover:border-gray-500'
+              }`}
+            >
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7S1 12 1 12z"/>
+                <circle cx="12" cy="12" r="3"/>
+              </svg>
+              Plex
+            </button>
 
             {currentUrl && (
               <button
@@ -208,7 +369,7 @@ export default function MainComponent() {
             </button>
           </form>
 
-          {/* Row 3: status strip */}
+          {/* Row 3: status */}
           {currentUrl && (
             <div className="mt-1.5 flex items-center text-xs text-gray-500 gap-1 overflow-hidden">
               <span className="truncate">{currentUrl}</span>
@@ -228,24 +389,32 @@ export default function MainComponent() {
         </div>
       )}
 
-      {/* Main */}
-      <main className="flex-1 flex flex-col">
-        {error && (
-          <div className="mx-3 mt-3 p-3 bg-red-950 border border-red-800 text-red-400 rounded-lg text-sm">
-            <i className="fas fa-exclamation-triangle mr-2" />{error}
-          </div>
-        )}
+      {/* Body: browser viewport + optional Plex panel */}
+      <main className="flex-1 flex overflow-hidden" style={{ height: 'calc(100vh - 110px)' }}>
+        <div className="flex-1 flex flex-col min-w-0">
+          {error && (
+            <div className="mx-3 mt-3 p-3 bg-red-950 border border-red-800 text-red-400 rounded-lg text-sm">
+              <i className="fas fa-exclamation-triangle mr-2" />{error}
+            </div>
+          )}
+          {!iframeSrc && !loading && !error && <EmptyState onNavigate={navigate} />}
+          {iframeSrc && (
+            <iframe
+              ref={iframeRef}
+              src={iframeSrc}
+              className="flex-1 w-full border-0 bg-white"
+              title="ONE Browser viewport"
+              sandbox="allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox"
+            />
+          )}
+        </div>
 
-        {!iframeSrc && !loading && !error && <EmptyState onNavigate={navigate} />}
-
-        {iframeSrc && (
-          <iframe
-            ref={iframeRef}
-            src={iframeSrc}
-            className="flex-1 w-full border-0 bg-white"
-            style={{ minHeight: 'calc(100vh - 110px)' }}
-            title="ONE Browser viewport"
-            sandbox="allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox"
+        {/* Plex perception panel */}
+        {plexOpen && (
+          <PlexPanel
+            currentUrl={currentUrl}
+            pageMeta={pageMeta}
+            onClose={() => setPlexOpen(false)}
           />
         )}
       </main>
@@ -270,12 +439,12 @@ function NavBtn({ onClick, disabled, title, children }) {
 
 function EmptyState({ onNavigate }) {
   const quickLinks = [
-    { label: 'Google',      url: 'https://www.google.com',                 icon: 'fa-magnifying-glass' },
-    { label: 'Perplexity',  url: 'https://www.perplexity.ai',              icon: 'fa-star' },
-    { label: 'GitHub',      url: 'https://github.com/Manitec',             icon: 'fa-code-branch' },
-    { label: 'Vercel',      url: 'https://vercel.com/manitecs-projects',   icon: 'fa-triangle' },
-    { label: 'HuggingFace', url: 'https://huggingface.co',                 icon: 'fa-robot' },
-    { label: "Joe's Faves", url: 'https://joesfaves.com',                  icon: 'fa-star' },
+    { label: 'Google',      url: 'https://www.google.com',               icon: 'fa-magnifying-glass' },
+    { label: 'Perplexity',  url: 'https://www.perplexity.ai',            icon: 'fa-star' },
+    { label: 'GitHub',      url: 'https://github.com/Manitec',           icon: 'fa-code-branch' },
+    { label: 'Vercel',      url: 'https://vercel.com/manitecs-projects', icon: 'fa-triangle' },
+    { label: 'HuggingFace', url: 'https://huggingface.co',               icon: 'fa-robot' },
+    { label: "Joe's Faves", url: 'https://joesfaves.com',                icon: 'fa-star' },
   ];
 
   return (
@@ -286,7 +455,7 @@ function EmptyState({ onNavigate }) {
           <path d="M2 12h20M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" stroke="currentColor" strokeWidth="1"/>
         </svg>
         <h2 className="text-xl font-bold text-white mb-1">ONE Browser</h2>
-        <p className="text-sm text-gray-500 mb-6">Browse through the empire&apos;s own proxy.</p>
+        <p className="text-sm text-gray-500 mb-6">Browse through the empire&apos;s own proxy. Ask Plex what she sees.</p>
         <div className="flex flex-wrap gap-2 justify-center">
           {quickLinks.map(({ label, url, icon }) => (
             <button
