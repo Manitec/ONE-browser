@@ -18,7 +18,7 @@ function resolveUrl(raw, base) {
 
 function rewriteHtml(html, pageUrl) {
   // Rewrite src, href, action attributes
-  html = html.replace(/(<[^>]+?\s)(src|href|action)=("([^"]*)"|'([^']*)')/gi, (match, pre, attr, _q, dq, sq) => {
+  html = html.replace(/(<[^>]+?[\s])(src|href|action)=("([^"]*)"|'([^']*)')/gi, (match, pre, attr, _q, dq, sq) => {
     const raw = dq ?? sq;
     const quote = dq !== undefined ? '"' : "'";
     const resolved = resolveUrl(raw, pageUrl);
@@ -59,7 +59,7 @@ function rewriteHtml(html, pageUrl) {
   return html;
 }
 
-// GET — proxy any asset (image, CSS, JS, font)
+// GET — proxy any asset (image, CSS, JS, font) — rewrites HTML if text/html
 export async function GET(request) {
   const { searchParams } = new URL(request.url);
   const url = searchParams.get('url');
@@ -75,13 +75,34 @@ export async function GET(request) {
 
   try {
     const res = await fetch(validUrl, {
-      headers: HEADERS,
+      headers: {
+        ...HEADERS,
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Upgrade-Insecure-Requests': '1',
+      },
       signal: AbortSignal.timeout(20000),
     });
 
     const contentType = res.headers.get('content-type') ?? 'application/octet-stream';
-    const body = await res.arrayBuffer();
+    const finalUrl = res.url || validUrl;
 
+    // If it's HTML, rewrite asset URLs so CSS/JS/fonts load through the proxy
+    if (contentType.includes('text/html')) {
+      const html = await res.text();
+      const rewritten = rewriteHtml(html, finalUrl);
+      return new NextResponse(rewritten, {
+        status: res.status,
+        headers: {
+          'Content-Type': 'text/html; charset=utf-8',
+          'Access-Control-Allow-Origin': '*',
+          'Cache-Control': 'public, max-age=60',
+          'X-Proxy-Final-Url': finalUrl,
+        },
+      });
+    }
+
+    // All other assets (CSS, JS, images, fonts) — pipe through as-is
+    const body = await res.arrayBuffer();
     return new NextResponse(body, {
       status: res.status,
       headers: {
@@ -96,7 +117,7 @@ export async function GET(request) {
   }
 }
 
-// POST — fetch full HTML page, rewrite all asset URLs
+// POST — kept for backward compat / direct JSON calls
 export async function POST(request) {
   let url;
   try {
