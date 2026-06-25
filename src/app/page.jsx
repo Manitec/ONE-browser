@@ -13,21 +13,12 @@ function isSearchQuery(input) {
   return !input.includes('.') && !input.startsWith('http');
 }
 
-function stripScripts(html) {
-  return html
-    .replace(/<script[\s\S]*?<\/script>/gi, '')
-    .replace(/\s+on\w+="[^"]*"/gi, '')
-    .replace(/\s+on\w+='[^']*'/gi, '')
-    .replace(/<img[^>]+(?:gen_204|pixel\.gif|track|beacon)[^>]*>/gi, '');
-}
-
-// Route og:image through our server proxy to avoid CORS/hotlink blocks
 function proxyImage(url) {
   if (!url) return null;
   return `/api/image-proxy?url=${encodeURIComponent(url)}`;
 }
 
-// ── Plex See Panel ─────────────────────────────────────────────────────────
+// ── Plex See Panel ──────────────────────────────────────────────────────────
 function PlexPanel({ currentUrl, pageMeta, onClose }) {
   const [prompt, setPrompt]     = React.useState('');
   const [response, setResponse] = React.useState(null);
@@ -50,7 +41,6 @@ function PlexPanel({ currentUrl, pageMeta, onClose }) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          // Send the raw og:image URL to Plex (it fetches it server-side, no CORS issue)
           imageUrl: pageMeta?.image || null,
           pageUrl: currentUrl,
           pageTitle: pageMeta?.title || null,
@@ -71,7 +61,6 @@ function PlexPanel({ currentUrl, pageMeta, onClose }) {
 
   return (
     <aside className="w-72 flex-shrink-0 bg-gray-900 border-l border-gray-800 flex flex-col h-full">
-      {/* Header */}
       <div className="flex items-center justify-between px-3 py-2.5 border-b border-gray-800">
         <div className="flex items-center gap-2">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" className="text-emerald-400">
@@ -80,18 +69,13 @@ function PlexPanel({ currentUrl, pageMeta, onClose }) {
           </svg>
           <span className="text-sm font-semibold text-white">Plex sees</span>
         </div>
-        <button
-          onClick={onClose}
-          className="text-gray-600 hover:text-gray-400 transition-colors p-1"
-          title="Close Plex panel"
-        >
+        <button onClick={onClose} className="text-gray-600 hover:text-gray-400 transition-colors p-1">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
             <path d="M18 6 6 18M6 6l12 12"/>
           </svg>
         </button>
       </div>
 
-      {/* Page context */}
       {pageMeta && (
         <div className="px-3 py-2.5 border-b border-gray-800/60">
           {proxiedImage && (
@@ -111,7 +95,6 @@ function PlexPanel({ currentUrl, pageMeta, onClose }) {
         </div>
       )}
 
-      {/* Prompt + Ask */}
       <div className="px-3 py-3 border-b border-gray-800/60">
         <textarea
           value={prompt}
@@ -144,7 +127,6 @@ function PlexPanel({ currentUrl, pageMeta, onClose }) {
         </button>
       </div>
 
-      {/* Response */}
       <div className="flex-1 overflow-y-auto px-3 py-3">
         {err && (
           <p className="text-xs text-red-400 bg-red-950/40 border border-red-800/40 rounded p-2">{err}</p>
@@ -155,19 +137,18 @@ function PlexPanel({ currentUrl, pageMeta, onClose }) {
           </p>
         )}
         {response && (
-          <div className="text-xs text-gray-300 leading-relaxed whitespace-pre-wrap">
-            {response}
-          </div>
+          <div className="text-xs text-gray-300 leading-relaxed whitespace-pre-wrap">{response}</div>
         )}
       </div>
     </aside>
   );
 }
 
-// ── Main ───────────────────────────────────────────────────────────────
+// ── Main ─────────────────────────────────────────────────────────────────────
 export default function MainComponent() {
   const [inputValue, setInputValue]     = React.useState('');
   const [currentUrl, setCurrentUrl]     = React.useState('');
+  // iframeSrc is now a /api/proxy?url= path — no more blob URLs
   const [iframeSrc, setIframeSrc]       = React.useState('');
   const [loading, setLoading]           = React.useState(false);
   const [error, setError]               = React.useState(null);
@@ -176,10 +157,9 @@ export default function MainComponent() {
   const [searchEngine, setSearchEngine] = React.useState('google');
   const [plexOpen, setPlexOpen]         = React.useState(false);
   const [pageMeta, setPageMeta]         = React.useState(null);
-  const abortRef    = React.useRef(null);
-  const iframeRef   = React.useRef(null);
-  const prevBlobRef = React.useRef(null);
+  const iframeRef = React.useRef(null);
 
+  // Fetch og meta silently on every navigation
   React.useEffect(() => {
     if (!currentUrl) { setPageMeta(null); return; }
     fetch('/api/meta', {
@@ -192,57 +172,30 @@ export default function MainComponent() {
       .catch(() => setPageMeta(null));
   }, [currentUrl]);
 
-  const navigate = React.useCallback(async (targetUrl) => {
+  const navigate = React.useCallback((targetUrl) => {
     if (!targetUrl) return;
-    if (abortRef.current) abortRef.current.abort();
 
-    let fullUrl = targetUrl;
+    let fullUrl = targetUrl.trim();
     if (!fullUrl.startsWith('http://') && !fullUrl.startsWith('https://'))
       fullUrl = 'https://' + fullUrl;
+
+    // Point the iframe directly at the server-side proxy GET endpoint.
+    // All relative asset URLs in the returned HTML resolve correctly against
+    // the browser origin (browser.manitec.pw), so CSS, fonts, and images load.
+    const proxySrc = `/api/proxy?url=${encodeURIComponent(fullUrl)}`;
 
     setLoading(true);
     setError(null);
     setInputValue(fullUrl);
+    setIframeSrc(proxySrc);
+    setCurrentUrl(fullUrl);
 
-    try {
-      abortRef.current = new AbortController();
-      const res = await fetch('/api/proxy', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url: fullUrl }),
-        signal: abortRef.current.signal,
-      });
-
-      if (!res.ok) throw new Error((await res.text()) || `HTTP ${res.status}`);
-      const html = await res.text();
-      if (!html?.trim()) throw new Error('Empty response from website');
-
-      if (prevBlobRef.current) {
-        URL.revokeObjectURL(prevBlobRef.current);
-        prevBlobRef.current = null;
-      }
-
-      const clean   = stripScripts(html);
-      const blob    = new Blob([clean], { type: 'text/html' });
-      const blobUrl = URL.createObjectURL(blob);
-      prevBlobRef.current = blobUrl;
-
-      setIframeSrc(blobUrl);
-      setCurrentUrl(fullUrl);
-
-      setHistory((prev) => {
-        const next = prev.slice(0, historyIndex + 1);
-        next.push(fullUrl);
-        return next;
-      });
-      setHistoryIndex((i) => i + 1);
-    } catch (err) {
-      if (err.name === 'AbortError') return;
-      setError(`Failed to load: ${err.message}`);
-    } finally {
-      setLoading(false);
-      abortRef.current = null;
-    }
+    setHistory((prev) => {
+      const next = prev.slice(0, historyIndex + 1);
+      next.push(fullUrl);
+      return next;
+    });
+    setHistoryIndex((i) => i + 1);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [historyIndex]);
 
@@ -258,15 +211,8 @@ export default function MainComponent() {
   const goForward = () => { if (historyIndex < history.length - 1) navigate(history[historyIndex + 1]); };
   const handleReset = () => {
     setCurrentUrl(''); setIframeSrc(''); setError(null); setInputValue('');
-    setPageMeta(null); setPlexOpen(false);
+    setPageMeta(null); setPlexOpen(false); setLoading(false);
   };
-
-  React.useEffect(() => {
-    return () => {
-      if (abortRef.current) abortRef.current.abort();
-      if (prevBlobRef.current) URL.revokeObjectURL(prevBlobRef.current);
-    };
-  }, []);
 
   const canBack = historyIndex > 0;
   const canFwd  = historyIndex < history.length - 1;
@@ -278,6 +224,7 @@ export default function MainComponent() {
       <header className="bg-gray-900 border-b border-gray-800 sticky top-0 z-10 shadow-lg">
         <div className="w-full px-2 sm:px-4 py-2 sm:py-3">
           <div className="flex items-center gap-1 sm:gap-2 mb-2">
+            {/* Logo */}
             <div className="flex items-center gap-1.5 mr-2 flex-shrink-0">
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" className="text-emerald-400">
                 <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="1.5"/>
@@ -288,8 +235,14 @@ export default function MainComponent() {
 
             <NavBtn onClick={goBack}    disabled={!canBack}  title="Back"><i className="fas fa-arrow-left text-xs" /></NavBtn>
             <NavBtn onClick={goForward} disabled={!canFwd}   title="Forward"><i className="fas fa-arrow-right text-xs" /></NavBtn>
-            <NavBtn onClick={() => currentUrl && navigate(currentUrl)} disabled={!currentUrl || loading} title="Reload">
-              {loading ? <i className="fas fa-spinner fa-spin text-xs" /> : <i className="fas fa-redo text-xs" />}
+            <NavBtn
+              onClick={() => currentUrl && navigate(currentUrl)}
+              disabled={!currentUrl || loading}
+              title="Reload"
+            >
+              {loading
+                ? <i className="fas fa-spinner fa-spin text-xs" />
+                : <i className="fas fa-redo text-xs" />}
             </NavBtn>
             <NavBtn onClick={handleReset} title="Home"><i className="fas fa-home text-xs" /></NavBtn>
 
@@ -307,6 +260,7 @@ export default function MainComponent() {
               <option value="brave">Brave</option>
             </select>
 
+            {/* Plex eye toggle */}
             <button
               onClick={() => setPlexOpen((o) => !o)}
               title={plexOpen ? 'Close Plex panel' : 'Ask Plex about this page'}
@@ -334,6 +288,7 @@ export default function MainComponent() {
             )}
           </div>
 
+          {/* URL bar */}
           <form onSubmit={handleSubmit} className="flex gap-2">
             <div className="relative flex-1">
               {currentUrl && (
@@ -363,6 +318,7 @@ export default function MainComponent() {
             </button>
           </form>
 
+          {/* Status bar */}
           {currentUrl && (
             <div className="mt-1.5 flex items-center text-xs text-gray-500 gap-1 overflow-hidden">
               <span className="truncate">{currentUrl}</span>
@@ -374,6 +330,7 @@ export default function MainComponent() {
         </div>
       </header>
 
+      {/* Loading bar */}
       {loading && (
         <div className="h-0.5 bg-gray-800 relative overflow-hidden flex-shrink-0">
           <div className="absolute inset-y-0 bg-emerald-400 animate-[progress_1.4s_ease-in-out_infinite] w-1/3" />
@@ -381,6 +338,7 @@ export default function MainComponent() {
         </div>
       )}
 
+      {/* Viewport + Plex panel */}
       <main className="flex-1 flex overflow-hidden" style={{ height: 'calc(100vh - 110px)' }}>
         <div className="flex-1 flex flex-col min-w-0">
           {error && (
@@ -395,7 +353,10 @@ export default function MainComponent() {
               src={iframeSrc}
               className="flex-1 w-full border-0 bg-white"
               title="ONE Browser viewport"
-              sandbox="allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox"
+              // allow-same-origin lets the proxied page resolve relative /api/proxy URLs
+              sandbox="allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox allow-same-origin"
+              onLoad={() => setLoading(false)}
+              onError={() => { setLoading(false); setError('Failed to load page.'); }}
             />
           )}
         </div>
@@ -436,7 +397,6 @@ function EmptyState({ onNavigate }) {
     { label: 'HuggingFace', url: 'https://huggingface.co',               icon: 'fa-robot' },
     { label: "Joe's Faves", url: 'https://joesfaves.com',                icon: 'fa-star' },
   ];
-
   return (
     <div className="flex-1 flex items-center justify-center px-4 py-16">
       <div className="text-center max-w-md">
