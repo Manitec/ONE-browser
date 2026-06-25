@@ -21,14 +21,19 @@ function stripScripts(html) {
     .replace(/<img[^>]+(?:gen_204|pixel\.gif|track|beacon)[^>]*>/gi, '');
 }
 
+// Route og:image through our server proxy to avoid CORS/hotlink blocks
+function proxyImage(url) {
+  if (!url) return null;
+  return `/api/image-proxy?url=${encodeURIComponent(url)}`;
+}
+
 // ── Plex See Panel ─────────────────────────────────────────────────────────
 function PlexPanel({ currentUrl, pageMeta, onClose }) {
-  const [prompt, setPrompt]       = React.useState('');
-  const [response, setResponse]   = React.useState(null);
-  const [thinking, setThinking]   = React.useState(false);
-  const [err, setErr]             = React.useState(null);
+  const [prompt, setPrompt]     = React.useState('');
+  const [response, setResponse] = React.useState(null);
+  const [thinking, setThinking] = React.useState(false);
+  const [err, setErr]           = React.useState(null);
 
-  // Reset when URL changes
   React.useEffect(() => {
     setResponse(null);
     setErr(null);
@@ -45,6 +50,7 @@ function PlexPanel({ currentUrl, pageMeta, onClose }) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          // Send the raw og:image URL to Plex (it fetches it server-side, no CORS issue)
           imageUrl: pageMeta?.image || null,
           pageUrl: currentUrl,
           pageTitle: pageMeta?.title || null,
@@ -61,12 +67,13 @@ function PlexPanel({ currentUrl, pageMeta, onClose }) {
     }
   };
 
+  const proxiedImage = proxyImage(pageMeta?.image);
+
   return (
     <aside className="w-72 flex-shrink-0 bg-gray-900 border-l border-gray-800 flex flex-col h-full">
-      {/* Panel header */}
+      {/* Header */}
       <div className="flex items-center justify-between px-3 py-2.5 border-b border-gray-800">
         <div className="flex items-center gap-2">
-          {/* Plex eye icon */}
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" className="text-emerald-400">
             <path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7S1 12 1 12z" stroke="currentColor" strokeWidth="1.5"/>
             <circle cx="12" cy="12" r="3" stroke="currentColor" strokeWidth="1.5"/>
@@ -87,24 +94,24 @@ function PlexPanel({ currentUrl, pageMeta, onClose }) {
       {/* Page context */}
       {pageMeta && (
         <div className="px-3 py-2.5 border-b border-gray-800/60">
-          {pageMeta.image && (
+          {proxiedImage && (
             <img
-              src={pageMeta.image}
+              src={proxiedImage}
               alt="page preview"
-              className="w-full h-24 object-cover rounded mb-2 opacity-80"
+              className="w-full h-28 object-cover rounded-md mb-2"
               onError={(e) => { e.target.style.display = 'none'; }}
             />
           )}
           {pageMeta.title && (
-            <p className="text-xs text-gray-300 font-medium truncate">{pageMeta.title}</p>
+            <p className="text-xs text-gray-200 font-medium leading-snug line-clamp-2">{pageMeta.title}</p>
           )}
           {pageMeta.description && (
-            <p className="text-xs text-gray-600 mt-0.5 line-clamp-2">{pageMeta.description}</p>
+            <p className="text-xs text-gray-500 mt-1 line-clamp-2 leading-snug">{pageMeta.description}</p>
           )}
         </div>
       )}
 
-      {/* Prompt + ask */}
+      {/* Prompt + Ask */}
       <div className="px-3 py-3 border-b border-gray-800/60">
         <textarea
           value={prompt}
@@ -137,13 +144,13 @@ function PlexPanel({ currentUrl, pageMeta, onClose }) {
         </button>
       </div>
 
-      {/* Response area */}
+      {/* Response */}
       <div className="flex-1 overflow-y-auto px-3 py-3">
         {err && (
           <p className="text-xs text-red-400 bg-red-950/40 border border-red-800/40 rounded p-2">{err}</p>
         )}
         {!response && !thinking && !err && (
-          <p className="text-xs text-gray-700 text-center mt-4">
+          <p className="text-xs text-gray-700 text-center mt-6 leading-relaxed">
             {currentUrl ? 'Press Ask Plex to let her see this page.' : 'Navigate somewhere first.'}
           </p>
         )}
@@ -157,7 +164,7 @@ function PlexPanel({ currentUrl, pageMeta, onClose }) {
   );
 }
 
-// ── Main Component ──────────────────────────────────────────────────────────
+// ── Main ───────────────────────────────────────────────────────────────
 export default function MainComponent() {
   const [inputValue, setInputValue]     = React.useState('');
   const [currentUrl, setCurrentUrl]     = React.useState('');
@@ -173,7 +180,6 @@ export default function MainComponent() {
   const iframeRef   = React.useRef(null);
   const prevBlobRef = React.useRef(null);
 
-  // Fetch og meta whenever URL settles
   React.useEffect(() => {
     if (!currentUrl) { setPageMeta(null); return; }
     fetch('/api/meta', {
@@ -251,7 +257,7 @@ export default function MainComponent() {
   const goBack    = () => { if (historyIndex > 0) navigate(history[historyIndex - 1]); };
   const goForward = () => { if (historyIndex < history.length - 1) navigate(history[historyIndex + 1]); };
   const handleReset = () => {
-    setCurrentUrl(''); setIframeSrc(''); setError(''); setInputValue('');
+    setCurrentUrl(''); setIframeSrc(''); setError(null); setInputValue('');
     setPageMeta(null); setPlexOpen(false);
   };
 
@@ -271,8 +277,6 @@ export default function MainComponent() {
       {/* Toolbar */}
       <header className="bg-gray-900 border-b border-gray-800 sticky top-0 z-10 shadow-lg">
         <div className="w-full px-2 sm:px-4 py-2 sm:py-3">
-
-          {/* Row 1 */}
           <div className="flex items-center gap-1 sm:gap-2 mb-2">
             <div className="flex items-center gap-1.5 mr-2 flex-shrink-0">
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" className="text-emerald-400">
@@ -282,20 +286,12 @@ export default function MainComponent() {
               <span className="font-bold text-sm tracking-tight text-white">ONE</span>
             </div>
 
-            <NavBtn onClick={goBack}    disabled={!canBack}  title="Back">
-              <i className="fas fa-arrow-left text-xs" />
-            </NavBtn>
-            <NavBtn onClick={goForward} disabled={!canFwd}   title="Forward">
-              <i className="fas fa-arrow-right text-xs" />
-            </NavBtn>
+            <NavBtn onClick={goBack}    disabled={!canBack}  title="Back"><i className="fas fa-arrow-left text-xs" /></NavBtn>
+            <NavBtn onClick={goForward} disabled={!canFwd}   title="Forward"><i className="fas fa-arrow-right text-xs" /></NavBtn>
             <NavBtn onClick={() => currentUrl && navigate(currentUrl)} disabled={!currentUrl || loading} title="Reload">
-              {loading
-                ? <i className="fas fa-spinner fa-spin text-xs" />
-                : <i className="fas fa-redo text-xs" />}
+              {loading ? <i className="fas fa-spinner fa-spin text-xs" /> : <i className="fas fa-redo text-xs" />}
             </NavBtn>
-            <NavBtn onClick={handleReset} title="Home">
-              <i className="fas fa-home text-xs" />
-            </NavBtn>
+            <NavBtn onClick={handleReset} title="Home"><i className="fas fa-home text-xs" /></NavBtn>
 
             <div className="flex-1" />
 
@@ -311,7 +307,6 @@ export default function MainComponent() {
               <option value="brave">Brave</option>
             </select>
 
-            {/* Plex eye toggle */}
             <button
               onClick={() => setPlexOpen((o) => !o)}
               title={plexOpen ? 'Close Plex panel' : 'Ask Plex about this page'}
@@ -339,7 +334,6 @@ export default function MainComponent() {
             )}
           </div>
 
-          {/* Row 2: URL bar */}
           <form onSubmit={handleSubmit} className="flex gap-2">
             <div className="relative flex-1">
               {currentUrl && (
@@ -369,7 +363,6 @@ export default function MainComponent() {
             </button>
           </form>
 
-          {/* Row 3: status */}
           {currentUrl && (
             <div className="mt-1.5 flex items-center text-xs text-gray-500 gap-1 overflow-hidden">
               <span className="truncate">{currentUrl}</span>
@@ -381,7 +374,6 @@ export default function MainComponent() {
         </div>
       </header>
 
-      {/* Loading bar */}
       {loading && (
         <div className="h-0.5 bg-gray-800 relative overflow-hidden flex-shrink-0">
           <div className="absolute inset-y-0 bg-emerald-400 animate-[progress_1.4s_ease-in-out_infinite] w-1/3" />
@@ -389,7 +381,6 @@ export default function MainComponent() {
         </div>
       )}
 
-      {/* Body: browser viewport + optional Plex panel */}
       <main className="flex-1 flex overflow-hidden" style={{ height: 'calc(100vh - 110px)' }}>
         <div className="flex-1 flex flex-col min-w-0">
           {error && (
@@ -409,7 +400,6 @@ export default function MainComponent() {
           )}
         </div>
 
-        {/* Plex perception panel */}
         {plexOpen && (
           <PlexPanel
             currentUrl={currentUrl}
